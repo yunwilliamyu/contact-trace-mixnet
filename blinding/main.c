@@ -81,12 +81,12 @@ int main(void)
         /* panic! the library couldn't be initialized, it is not safe to use */
     }
 
-    int num_tokens = 1000;
+    int num_tokens = 60000;
     int num_print = 10;
 
     // Let's get some deterministic keys to use
     unsigned char sec[crypto_core_ristretto255_BYTES];
-    key(sec, 500);
+    key(sec, 1502);
 
     // We can generate an entire list of things.
     printf("Random tokens:\n");
