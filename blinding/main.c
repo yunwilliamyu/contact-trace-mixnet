@@ -1,4 +1,5 @@
 #include <sodium.h> // This must be libsodium 1.0.18+
+#include <time.h>
 
 // None of the code in main is meant to be run. 
 // It is just here to test out the various functions which will be
@@ -81,15 +82,17 @@ int main(void)
         /* panic! the library couldn't be initialized, it is not safe to use */
     }
 
-    int num_tokens = 60000;
+    int num_tokens = 50000;
     int num_print = 10;
 
     // Let's get some deterministic keys to use
     unsigned char sec[crypto_core_ristretto255_BYTES];
     key(sec, 1502);
 
+    time_t now = time(0);
+
     // We can generate an entire list of things.
-    printf("Random tokens:\n");
+    printf("Random tokens:%ju\n", now);
     unsigned char A[num_tokens][crypto_core_ristretto255_BYTES];
 	unsigned char tmp[crypto_core_ristretto255_SCALARBYTES];
     int i;
@@ -107,7 +110,8 @@ int main(void)
 
     printf("\n");
 
-    printf("Encrypted tokens:\n");
+    now = time(0);
+    printf("Encrypted tokens:%ju\n", now);
     // Now let's encrypt the tokens by taking them to a secret exponent
     // Happens client side
     unsigned char hA[num_tokens][crypto_core_ristretto255_BYTES];
@@ -121,7 +125,8 @@ int main(void)
 
     printf("\n");
 
-    printf("Shuffled and blinded tokens:\n");
+    now = time(0);
+    printf("Shuffled and blinded tokens:%ju\n", now);
     // Let's now try shuffling and blinding
 	unsigned char k[crypto_core_ristretto255_SCALARBYTES];
     //crypto_core_ristretto255_scalar_random(k);
@@ -136,7 +141,8 @@ int main(void)
 	
     printf("\n");
 
-    printf("Unencrypted tokens:\n");
+    now = time(0);
+    printf("Unencrypted tokens:%ju\n", now);
     // Now let's try unencrypting the tokens
     // Happens client side
     unsigned char uB[num_tokens][crypto_core_ristretto255_BYTES];
