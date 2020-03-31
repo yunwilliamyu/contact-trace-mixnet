@@ -77,10 +77,12 @@ int key(unsigned char sec[], const int n) {
 
 int main(void)
 {
-    printf("Hello world!");
     if (sodium_init() < 0) {
         /* panic! the library couldn't be initialized, it is not safe to use */
     }
+
+    int num_tokens = 1000;
+    int num_print = 10;
 
     // Let's get some deterministic keys to use
     unsigned char sec[crypto_core_ristretto255_BYTES];
@@ -88,16 +90,18 @@ int main(void)
 
     // We can generate an entire list of things.
     printf("Random tokens:\n");
-    unsigned char A[10][crypto_core_ristretto255_BYTES];
+    unsigned char A[num_tokens][crypto_core_ristretto255_BYTES];
 	unsigned char tmp[crypto_core_ristretto255_SCALARBYTES];
     int i;
     int j;
-    unsigned char arr[10];
-    for (i=0; i<10; i++) {
+    unsigned char arr[num_tokens];
+    for (i=0; i<num_tokens; i++) {
         arr[0] = i;
         unsigned char H[64];
         crypto_generichash(H, 64, arr, 1, NULL, 0);
         crypto_core_ristretto255_from_hash(A[i], H);
+    }
+    for (i=0; i<num_print; i++) {
         print_ristretto(A[i], 32);
     }
 
@@ -106,18 +110,14 @@ int main(void)
     printf("Encrypted tokens:\n");
     // Now let's encrypt the tokens by taking them to a secret exponent
     // Happens client side
-    unsigned char hA[10][crypto_core_ristretto255_BYTES];
-    exponentiate(hA, A, sec, 10);
-    for (i=0; i<10; i++) {
+    unsigned char hA[num_tokens][crypto_core_ristretto255_BYTES];
+    exponentiate(hA, A, sec, num_tokens);
+    for (i=0; i<num_print; i++) {
         print_ristretto(hA[i], 32);
     }
 
     // Here we start the server's side
 
-    // We can generate permutations
-    //size_t I[10];
-    //safe_permutation(I, 10);
-    //for (i=0; i<10; i++) printf("%lu ", I[i]);
     printf("\n");
 
     printf("Shuffled and blinded tokens:\n");
@@ -125,11 +125,10 @@ int main(void)
 	unsigned char k[crypto_core_ristretto255_SCALARBYTES];
     //crypto_core_ristretto255_scalar_random(k);
     key(k, 501);
-    unsigned char B[10][crypto_core_ristretto255_BYTES];
-    shuffle_and_blind(B, hA, k, 10);
-    //shuffle(B, hA, 10);
-
-    for (i=0; i<10; i++) {
+    unsigned char B[num_tokens][crypto_core_ristretto255_BYTES];
+    shuffle_and_blind(B, hA, k, num_tokens);
+    //shuffle(B, hA, num_tokens);
+    for (i=0; i<num_print; i++) {
         print_ristretto(B[i], 32);
     }
 	
@@ -138,12 +137,12 @@ int main(void)
     printf("Unencrypted tokens:\n");
     // Now let's try unencrypting the tokens
     // Happens client side
-    unsigned char uB[10][crypto_core_ristretto255_BYTES];
+    unsigned char uB[num_tokens][crypto_core_ristretto255_BYTES];
     unsigned char dec[crypto_core_ristretto255_BYTES];
     crypto_core_ristretto255_scalar_invert(dec, sec);
     
-    exponentiate(uB, B, dec, 10);
-    for (i=0; i<10; i++) {
+    exponentiate(uB, B, dec, num_tokens);
+    for (i=0; i<num_print; i++) {
         print_ristretto(uB[i], 32);
     }
 
