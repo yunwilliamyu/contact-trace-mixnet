@@ -63,6 +63,13 @@ int shuffle_and_blind(unsigned char B[][crypto_core_ristretto255_BYTES], unsigne
     exponentiate(B, C, k, length);
 }
 
+// Deduplication
+int deduplicate(unsigned char A[][crypto_core_ristretto255_BYTES], const size_t length) {
+    //crypto_generichash(sec, 64, bytes, 4, NULL, 0);
+
+    // TODO
+}
+
 // Helper function so I can get a few deterministic keys (never should be used in real implementation
 int key(unsigned char sec[], const int n) {
     //unsigned char sec[crypto_core_ristretto255_BYTES];
