@@ -112,6 +112,7 @@ int main(void)
     // Happens client side
     unsigned char hA[num_tokens][crypto_core_ristretto255_BYTES];
     exponentiate(hA, A, sec, num_tokens);
+    //shuffle(hA, A, num_tokens);
     for (i=0; i<num_print; i++) {
         print_ristretto(hA[i], 32);
     }
@@ -127,7 +128,8 @@ int main(void)
     key(k, 501);
     unsigned char B[num_tokens][crypto_core_ristretto255_BYTES];
     shuffle_and_blind(B, hA, k, num_tokens);
-    //shuffle(B, hA, num_tokens);
+    //exponentiate(B, hA, k, num_tokens);
+    shuffle(B, hA, num_tokens);
     for (i=0; i<num_print; i++) {
         print_ristretto(B[i], 32);
     }
