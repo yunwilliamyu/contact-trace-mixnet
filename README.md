@@ -4,7 +4,7 @@ It includes three separate components:
 
 # Blinding server
 
-using Node.js for endpoints and a super basic libsodium implementation of the exponentiations.
+Using Go and libsodium.
 
 ## Endpoints:
 
@@ -29,7 +29,7 @@ values: []string
 ```
 ## Blinding plugin
 
-We need a highly performant (C++ + Libsodium?) plugin that implements a single function:
+We need a highly performant (Go + Libsodium?) plugin that implements a single function:
 1. Shuffle
 2. Exponentiate with secret exponent. (Perhaps this secret token should rotate for more forward security?)
 
