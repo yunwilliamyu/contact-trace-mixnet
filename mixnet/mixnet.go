@@ -3,8 +3,10 @@ package mixnet
 import (
 	"bytes"
 	cryptorand "crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"github.com/yunwilliamyu/contact-trace-mixnet/rand"
+	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/nacl/box"
 	"io"
 	"log"
@@ -29,12 +31,16 @@ func (mc MixnetConfig) URL(idx int) string {
 	return fmt.Sprintf("http://%s/receive", mc.Addrs[idx])
 }
 
+type keys struct {
+	privateKey [32]byte
+	publicKey  [32]byte
+}
+
 // MixnetServer represents a nonfinal server in the mixnet chain
 type MixnetServer struct {
 	conf           *MixnetConfig
 	idx            int // how many servers are there in front of me, incl. the final endpoint
-	privateKey     [32]byte
-	publicKey      [32]byte
+	keys           keys
 	MessageHandler func([]byte)
 	// next server address/connection to it
 
@@ -59,7 +65,7 @@ func (ms *MixnetServer) Receive(msg []byte) (ok bool) {
 		return false
 	}
 	// TODO: do we need to ensure that only the previous server is talking to us? probably, because
-	decMsg, ok := box.OpenAnonymous(nil, msg, &ms.publicKey, &ms.privateKey)
+	decMsg, ok := box.OpenAnonymous(nil, msg, &ms.keys.publicKey, &ms.keys.privateKey)
 	if !ok {
 		log.Printf("%s: received invalid message", ms.name())
 		return false // invalid message, ignore
@@ -159,14 +165,26 @@ func (ms *MixnetServer) Run() error {
 	return s.ListenAndServe()
 }
 
-func NewMixnetServer(conf *MixnetConfig, key []byte) *MixnetServer {
+func deriveKeys(masterKey string) keys {
+	var k keys
+	onionDeriver := hkdf.New(sha256.New, []byte(masterKey), nil, []byte("ONION_KEY"))
+	var err error
+	onionPubKey, onionPrivKey, err := box.GenerateKey(onionDeriver)
+	if err != nil {
+		log.Fatal(err)
+	}
+	k.publicKey = *onionPubKey
+	k.privateKey = *onionPrivKey
+	return k
+}
+
+func NewMixnetServer(conf *MixnetConfig, masterKey string) *MixnetServer {
 	ms := &MixnetServer{conf: conf}
-	copy(ms.privateKey[:], key[0:32])
-	copy(ms.publicKey[:], key[32:])
+	ms.keys = deriveKeys(masterKey)
 
 	ms.idx = -1
 	for i, pk := range conf.PubKeys {
-		if pk == ms.publicKey {
+		if pk == ms.keys.publicKey {
 			ms.idx = i
 			break
 		}
@@ -177,21 +195,9 @@ func NewMixnetServer(conf *MixnetConfig, key []byte) *MixnetServer {
 	return ms
 }
 
-func GenerateKeypair() []byte {
-	pubKey, privKey, err := box.GenerateKey(cryptorand.Reader)
-	if err != nil {
-		panic(err)
-	}
-	r := make([]byte, 32*2)
-	copy(r[0:32], privKey[:])
-	copy(r[32:], pubKey[:])
-	return r
-}
-
-func PubKey(keypair []byte) [32]byte {
-	var r [32]byte
-	copy(r[:], keypair[32:])
-	return r
+func PubKey(masterKey string) [32]byte {
+	keys := deriveKeys(masterKey)
+	return keys.publicKey
 }
 
 type MixnetClient struct {

@@ -9,10 +9,10 @@ import (
 func main() {
 	conf := &mixnet.MixnetConfig{}
 	// TODO: load config
-	key, err := ioutil.ReadFile("mykey")
+	masterKey, err := ioutil.ReadFile("mykey")
 	if err != nil {
 		log.Fatal(err)
 	}
-	ms := mixnet.NewMixnetServer(conf, key)
+	ms := mixnet.NewMixnetServer(conf, string(masterKey))
 	log.Fatal(ms.Run())
 }

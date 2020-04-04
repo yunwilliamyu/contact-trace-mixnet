@@ -15,22 +15,22 @@ func msgForId(i int) [InnerMessageLength]byte {
 
 func TestSmoke(t *testing.T) {
 	const depth = 3
-	keys := make([][]byte, depth)
-	for i := range keys {
-		keys[i] = GenerateKeypair()
+	masterKeys := make([]string, depth)
+	for i := range masterKeys {
+		masterKeys[i] = fmt.Sprintf("key%d", i)
 	}
 	mc := MixnetConfig{
 		Addrs:   make([]string, depth),
 		PubKeys: make([][32]byte, depth),
 	}
-	for i := range keys {
+	for i := range masterKeys {
 		mc.Addrs[i] = fmt.Sprintf("127.0.0.1:%d", 8000+i)
-		mc.PubKeys[i] = PubKey(keys[i])
+		mc.PubKeys[i] = PubKey(masterKeys[i])
 	}
 	recv := make(chan string, 1)
-	for i := range keys {
+	for i := range masterKeys {
 		go func(i int) {
-			ms := NewMixnetServer(&mc, keys[i])
+			ms := NewMixnetServer(&mc, masterKeys[i])
 			if i == 0 {
 				ms.MessageHandler = func(msg []byte) {
 					fmt.Printf("msg: %v\n", msg)
