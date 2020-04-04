@@ -9,14 +9,14 @@ Using Go and libsodium.
 ## Endpoints:
 
 ### Post
-We need an endpoint for users to post their tokens to be shuffled.
+We have an endpoint for users to post their tokens to be shuffled.
 
 The request will contain:
 
 ```
 actual_request {
-  values: []string
-  day: date # chooses the key
+  "DayID": date         # integer; chooses the key
+  "Inputs": []string    # a byte-string containing all the 32-byte tokens as ECC curve points concatenated together
 }
 mobile_os: enum
 signed_nonce: string # hash of actual request signed by mobile OS's "device verification" mechanism
