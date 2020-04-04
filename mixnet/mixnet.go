@@ -19,9 +19,8 @@ import (
 // TODO: TLS
 // TODO: maybe non-http if we need something in any way more complicated
 
-const MinBatch = 4 // TODO: realistic value
-
 type MixnetConfig struct {
+	MinBatch int
 	// reverse indexed!
 	Addrs   []string
 	PubKeys [][32]byte // [0] is unused
@@ -144,7 +143,7 @@ func (ms *MixnetServer) loop() {
 		ms.mu.Lock()
 		count := len(ms.onions)
 		ms.mu.Unlock()
-		if count > MinBatch {
+		if count > ms.conf.MinBatch {
 			ms.push()
 		}
 		time.Sleep(time.Millisecond)

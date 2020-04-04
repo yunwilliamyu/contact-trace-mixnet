@@ -20,6 +20,7 @@ func TestSmoke(t *testing.T) {
 		masterKeys[i] = fmt.Sprintf("key%d", i)
 	}
 	mc := MixnetConfig{
+		MinBatch: 5,
 		Addrs:   make([]string, depth),
 		PubKeys: make([][32]byte, depth),
 	}
