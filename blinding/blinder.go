@@ -1,20 +1,25 @@
-package main
+package blinding
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"golang.org/x/crypto/hkdf"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"path/filepath"
 	"sort"
+	"sync"
 	"unsafe"
 )
 
-// #cgo LDFLAGS: -lsodium
-// #include <sodium.h>
+// #cgo LDFLAGS: -lsodium -L/nix/store/2vk6hqbm5v0yf8pinm1k7kl0aw2gqgfb-libsodium-1.0.18/lib
+// #cgo CPPFLAGS: -I/nix/store/0hwzg5r2v806zx7zrf9jzr9zacqzfv4s-libsodium-1.0.18-dev/include/
+// #include "sodium.h"
 import "C"
 
 type BlindingKey struct {
@@ -77,12 +82,25 @@ func (bk *BlindingKey) Blind(values [][]byte) error {
 }
 
 type Blinder struct {
-	key *BlindingKey
+	keyReader func(int) (*BlindingKey, error)
+
+	keys map[int]*BlindingKey
+	mu   sync.Mutex
 }
 
-func (b *Blinder) KeyForDay(dayID int) *BlindingKey {
-	// TODO: different keys for different days
-	return b.key
+func (b *Blinder) KeyForDay(dayID int) (*BlindingKey, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if k, ok := b.keys[dayID]; ok {
+		return k, nil
+	}
+	// TODO: don't hold the lock while reading a key
+	k, err := b.keyReader(dayID)
+	if err != nil {
+		return nil, err
+	}
+	b.keys[dayID] = k
+	return k, nil
 }
 
 type BlindingRequest struct {
@@ -114,7 +132,12 @@ func (b *Blinder) actualServeHTTP(rw http.ResponseWriter, req *http.Request) err
 		}
 	}
 
-	if err := b.KeyForDay(r.DayID).Blind(tokens); err != nil {
+	key, err := b.KeyForDay(r.DayID)
+	if err != nil {
+		return err
+	}
+
+	if err := key.Blind(tokens); err != nil {
 		return err
 	}
 
@@ -143,15 +166,38 @@ func (b *Blinder) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func main() {
+func New(keyReader func(int) (*BlindingKey, error)) *Blinder {
+	return &Blinder{
+		keyReader: keyReader,
+		keys:      make(map[int]*BlindingKey),
+	}
+}
+
+func (b *Blinder) Run(listenAddr string) error {
+	mux := http.NewServeMux()
+	mux.Handle("/v0/blind", b)
+	s := &http.Server{
+		Addr:    listenAddr,
+		Handler: mux,
+	}
+	return s.ListenAndServe()
+}
+
+type KeyReader struct {
+	Dir string
+}
+
+func (kr KeyReader) ReadKey(dayID int) (*BlindingKey, error) {
+	path := filepath.Join(kr.Dir, fmt.Sprintf("%d.key", dayID))
+	rawKey, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return NewBlindingKey(string(rawKey)), nil
+}
+
+func init() {
 	if C.sodium_init() < 0 {
 		panic("sodium_init")
 	}
-	// TODO: this should be read (for each day separately) from secrets storage
-	masterKey := "abcdef"
-	b := &Blinder{
-		key: NewBlindingKey(masterKey),
-	}
-	http.Handle("/v0/blind", b)
-	log.Fatal(http.ListenAndServe(":8787", nil))
 }
