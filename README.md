@@ -16,7 +16,7 @@ The request will contain:
 ```
 actual_request {
   "DayID": date         # integer; chooses the key
-  "Inputs": []string    # a byte-string containing all the 32-byte tokens as ECC curve points concatenated together
+  "Inputs": []string    # a byte-string containing all the 32-byte tokens as ECC curve points concatenated together, encoded in hexadecimal
 }
 mobile_os: enum
 signed_nonce: string # hash of actual request signed by mobile OS's "device verification" mechanism
@@ -30,7 +30,25 @@ values: []string
 
 # Mixnet forwarder
 
-All it would do is take transformed tokens, batch them up, and forward the batch onto the next server in a chain, who would do the same thing. You need at least two of these connected in a chain. Each mixnet unwraps one layer of onion encryption, and then shuffles.
+We have implemented a batched forward-only node of a linear mix-net. By having a linear system, we are able to cut down on the overhead of including routing information in the onion packets.
+
+Upon receipt of a message containing a collection of onion packets, the node unwraps one layer of the onion packets, and stores them temporarily.
+When the number of messages (or the time between pushes) reaches some threshold, the node batches all the onion packets together, shuffles them, and pushes them to the next node in the mixnet chain.
+
+In order to have any privacy, you need at least two of these nodes connected in a chain, but the more the better.
+Privacy of the individual sending messages through the chain is maintained so long as 1-of-n nodes are honest.
+
+## Endpoints:
+
+### Post
+This may either receive messages from end-users who are self-reporting, or from the previous node in the chain.
+
+The request will contain:
+
+```
+actual_request: []bytes   # a binary blob containing a collection of NaCL boxes (the onion packets) concatenated together
+```
+
 
 ## Endpoints
 
