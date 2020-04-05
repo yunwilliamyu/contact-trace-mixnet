@@ -41,7 +41,7 @@ Privacy of the individual sending messages through the chain is maintained so lo
 ## Endpoints:
 
 ### Post
-This may either receive messages from end-users who are self-reporting, or from the previous node in the chain.
+This may either receive messages from end-users, or from the previous node in the chain.
 
 The request will contain:
 
@@ -49,30 +49,55 @@ The request will contain:
 actual_request: []bytes   # a binary blob containing a collection of NaCL boxes (the onion packets) concatenated together
 ```
 
-
-## Endpoints
-
-### Post
-
-This can be used by either a user or the upstream mixnet forwarder.
-
-### Get public key
-
-Just a static ascii-armored public key.
-
 ## Pushing:
 The forwarder will wait a specified amount of time, or until it has batched and permuted sufficient number of tokens before pushing data to the next mixnet forwarder (or to the database store).
 
-# Database store
+The push format is the same as the format in which the forwarder received messages, but with one fewer layer of onion encryption.
+Note for implementation purposes that this means the out-going messages will be slightly smaller than the incoming messages.
+Each mixnet node thus must know its position in the linear chain, so that it knows how long the messages it expects to receive are.
 
-All it does is accept tokens and puts them into a database and/or Bloom filter, and then make the entire thing available to download.
+## Replicas:
+You can turn up as many replicas of each mix-node as desired, so long as they all have the same keyset.
+The upstream node's message can be processed by any of them, though note that each replica will have to wait until it reaches the threshold number of onion packets before it pushes to the next stage of the mixnet.
+Turning up too many replicas may increase latency, but this is easily avoided by only turning up replicas if a stage of the mix-net is reaching capacity.
+
+# Database store v1 (with forwarding; 1-of-2 privacy)
+The database accepts (mostly) unwrapped onion packets from the final mix-net node, and stores them in a database (format to be determined).
+This database can be thought of as a collection of mailboxes, with possibly multiple messages per address, stored in order of receipt.
+A query to the database takes the form of asking for all messages in a particular mailbox that arrived after a specific message.
+
+Furthermore, this version of the database also records a collection of forwarding addresses on the polling gateway for each mailbox, along with a subscription marker.
+Periodically, the database will send all mail that arrived after the subscription marker to a forwarding address.
+It will then update the subscription marker to the current state of the mailbox.
 
 ## Endpoints:
+The database store also receives binary blobs in the same format as the mix-net servers, and unwraps the final onion encryption wrapping, to reveal actual envelopes.
 
 ### Post
+```
+actual_request: []bytes   # a binary blob containing a collection of NaCL boxes (the onion packets) concatenated together
+```
 
 This will be used by the upstream mixnet forwarder to send tokens to the store.
 
-### Get
+#### Message format
+Although the endpoint receives a collection of NaCL boxes, there are several different types of wrapped messages that the Database Store needs to process:
 
-Just a static download allowing users to download either the full encrypted database, or a Bloom filter of them.
+1. Publish request: An encrypted message to be deposited in a mailbox for retrieval.
+```
+mailbox addr + box(encrypted message)
+```
+
+2. Sub request: A request to set up a forwarding address.
+```
+mailbox addr + box(polling gw mailbox addr)
+```
+
+
+# Polling gateway v1 (1-of-2 privacy)
+The polling gateway acts as an agent for Alice to retrieve mailboxes from the Database Store v1.
+To that end, Alice registers a mailbox with N ephemeral receiving addresses.
+Then, Alice, sends a series of N messages to the Database Store through the mixnet, each one associating a Database Store address with an ephemeral receiving address on the Polling gateway.
+
+
+# Database store v2 (1-of-n privacy)
