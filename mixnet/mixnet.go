@@ -35,6 +35,18 @@ type keys struct {
 	publicKey  [32]byte
 }
 
+func forwardMessageLength(idx int) int {
+	return InnerMessageLength + box.AnonymousOverhead*(idx+1)
+}
+
+func (k keys) forwardTransformOnion(msg []byte) ([]byte, error) {
+	decMsg, ok := box.OpenAnonymous(nil, msg, &k.publicKey, &k.privateKey)
+	if !ok {
+		return nil, fmt.Errorf("received invalid message") // invalid message, ignore
+	}
+	return decMsg, nil
+}
+
 // MixnetServer represents a nonfinal server in the mixnet chain
 type MixnetServer struct {
 	conf           *MixnetConfig
@@ -49,27 +61,23 @@ type MixnetServer struct {
 
 const InnerMessageLength = 10 // TODO
 
-func messageLength(idx int) int {
-	return InnerMessageLength + box.AnonymousOverhead*(idx+1)
-}
-
 // TODO: sane logging prefixes
 func (ms *MixnetServer) name() string {
 	return ms.conf.Addrs[ms.idx]
 }
 
 func (ms *MixnetServer) Receive(msg []byte) (ok bool) {
-	if len(msg) != messageLength(ms.idx) {
+	// TODO: do we need to ensure that only the previous server is talking to us? probably, because
+	if len(msg) != forwardMessageLength(ms.idx) {
 		log.Printf("received message of invalid length")
 		return false
 	}
-	// TODO: do we need to ensure that only the previous server is talking to us? probably, because
-	decMsg, ok := box.OpenAnonymous(nil, msg, &ms.keys.publicKey, &ms.keys.privateKey)
-	if !ok {
-		log.Printf("%s: received invalid message", ms.name())
-		return false // invalid message, ignore
+	decMsg, err := ms.keys.forwardTransformOnion(msg)
+	if err != nil {
+		log.Printf("received invalid message: %s", err.Error())
+		return false
 	}
-	if len(decMsg) != messageLength(ms.idx-1) {
+	if len(decMsg) != forwardMessageLength(ms.idx-1) {
 		panic(len(decMsg))
 	}
 	ms.addMessage(decMsg)
@@ -92,7 +100,7 @@ func (ms *MixnetServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	msgSize := messageLength(ms.idx)
+	msgSize := forwardMessageLength(ms.idx)
 	for {
 		msg := make([]byte, msgSize)
 		if _, err := io.ReadFull(req.Body, msg); err != nil {
@@ -123,7 +131,7 @@ func (ms *MixnetServer) push() {
 	})
 
 	// concatenate all the onions
-	allOnions := make([]byte, 0, len(onions)*messageLength(ms.idx-1))
+	allOnions := make([]byte, 0, len(onions)*forwardMessageLength(ms.idx-1))
 	for _, o := range onions {
 		allOnions = append(allOnions, o...)
 	}
