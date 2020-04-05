@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package pb;
+
+service Notifier {
+  rpc PostNotificationV1(PostRequestV1) returns (Empty) {}
+  rpc FetchNotifications(FetchRequest) returns (FetchResponse) {}
+}
+
+message Empty {
+}
+
+message PostRequestV1 {
+  bytes sealed_address = 1;
+  bytes contents = 2;
+}
+
+message FetchRequest {
+  bytes deaddrop_id = 1;
+  bytes last_read = 2;
+}
+
+message Notification {
+  uint32 hint = 1;
+  bytes contents = 2;
+}
+
+message FetchResponse {
+  repeated Notification notifications = 1;
+}
