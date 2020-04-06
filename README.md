@@ -80,7 +80,7 @@ actual_request: []bytes   # a binary blob containing a collection of NaCL boxes 
 
 This will be used by the upstream mixnet forwarder to send tokens to the store.
 
-#### Message format
+## Message format
 Although the endpoint receives a collection of NaCL boxes, there are several different types of wrapped messages that the Database Store needs to process:
 
 1. Publish request: An encrypted message to be deposited in a mailbox for retrieval.
@@ -92,6 +92,12 @@ mailbox addr + box(encrypted message)
 ```
 mailbox addr + box(polling gw mailbox addr)
 ```
+Note that the polling gw mailbox addr is actually just another box(dead drop id + distinguisher).
+
+The database store will send messages to the polling gateway with the following format
+```
+box(dead drop id + distinguisher) + forwarded message
+```
 
 
 # Polling gateway v1 (1-of-2 privacy)
@@ -99,5 +105,22 @@ The polling gateway acts as an agent for Alice to retrieve mailboxes from the Da
 To that end, Alice registers a mailbox with N ephemeral receiving addresses.
 Then, Alice, sends a series of N messages to the Database Store through the mixnet, each one associating a Database Store address with an ephemeral receiving address on the Polling gateway.
 
+When the polling gateway receives a message from the Database Store, it will include an encrypted message, as well as a box(dead drop id + distinguisher).
+The polling gateway will unwrap the box, and put the encrypted message along with the distinguisher into the dead drop
 
-# Database store v2 (1-of-n privacy)
+## Endpoints:
+We only need to allow Alice to poll the dead drop. Since we assume that dead drops are unique to a person, once the dead drop has been polled, the Polling Gateway can discard all messages in the dead drop.
+
+### poll (exposed to users)
+```
+dead_drop_id: []bytes
+last_read_message_hash: []bytes // truncated
+```
+
+We also need a starting token, to indicate which messages were already read (we should ensure that a failed poll request doesn't drop messages on the floor). We can remove old messages when we get the next poll request, that indicates that these messages were already processed.
+
+
+# Round-trip Mix-net node (v2) (for 1-of-n privacy)
+The v1 polling gateway and database store are limited to 1-of-2 privacy. This is due to the fact that the polling gateway and database store can collude to determine the source IP addresses of queries to any set of mailboxes. Even if the database store forwards messages through a mix-net, it can choose to send a specially crafted message designed to reveal the shuffling and address obfuscation when received by the polling gateway. Thus, there is not benefit to using the mix-net for forwarding messages. This is in stark contrast to the messages sent to the database store, which instead have 1-of-n privacy, where so long as there is one honest mix server, privacy for the sender is preserved. In v1, privacy for the recipient requires at least 1 of the database store or the polling gateway to be honest.
+
+Preventing this requires a mix-net structure and message format that allows messages round-trip messages. This has not yet been implemented, but by performing a deterministic address re-encryption (see Chaum), we can implement the equivalent of a polling gateway for the recipient, without allowing collusion of the polling gateway and database store to reveal recipient IP addreses.
