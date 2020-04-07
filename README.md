@@ -1,6 +1,6 @@
 This server will implement a mix-net for contact tracing, to hide the identities of users when they broadcast infection status to recent contacts.
 
-It includes three separate components:
+It includes three separate components: (1) a blinding server, which serves to prevent an after-the-fact dictionary attack on geohashes, (2) a mix-net, which protects against social graph attack by the data store, and (3) a data store server, whch actually hosts the encrypted messages between uesers in a series of deaddrops (mailboxes).
 
 # Blinding server
 
