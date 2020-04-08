@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
+	"github.com/yunwilliamyu/contact-trace-mixnet/configs"
 	"github.com/yunwilliamyu/contact-trace-mixnet/mixnet"
 	"io/ioutil"
 	"log"
@@ -15,22 +15,13 @@ var listenAddr = flag.String("listen_addr", "PROVIDE LISTEN ADDR", "Address to b
 var idx = flag.Int("idx", 0, "Index in the mixnet, counting from the end") // TODO: relieve the need to specify this
 var config = flag.String("config_file", "", "path to the location of the config file in json format")
 
-func configFromFlag() *mixnet.MixnetServerConfig {
-	text, err := ioutil.ReadFile(*config)
-	if err != nil {
-		log.Fatal(err)
-	}
-	c := &mixnet.MixnetServerConfig{}
-	if err := json.Unmarshal(text, &c); err != nil {
-		log.Fatal(err)
-	}
-	return c
-}
-
 func main() {
 	flag.Parse()
 
-	conf := configFromFlag()
+	conf := &mixnet.MixnetServerConfig{}
+	if err := configs.LoadConfig(*config, conf); err != nil {
+		log.Fatal(err)
+	}
 
 	masterKey, err := ioutil.ReadFile(*masterKeyFile)
 	if err != nil {
