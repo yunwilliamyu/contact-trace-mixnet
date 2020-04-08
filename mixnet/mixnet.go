@@ -65,19 +65,33 @@ type MixnetServer struct {
 
 const InnerMessageLength = 10 // TODO
 
-func (ms *MixnetServer) Receive(msg []byte) (ok bool) {
+const MaxMessagesInMemory = 100 * 1000
+
+func (ms *MixnetServer) Receive(msgs [][]byte) error {
 	// TODO: do we need to ensure that only the previous server is talking to us? probably, because
-	if len(msg) != ms.conf.InputMessageLength {
-		log.Printf("received message of invalid length")
-		return false
+	ms.mu.Lock()
+	// do not bother decrypting if we want to refuse anyway
+	messageCount := len(ms.onions) + len(msgs)
+	ms.mu.Unlock()
+
+	if messageCount > MaxMessagesInMemory {
+		return fmt.Errorf("too many buffered messages")
 	}
-	decMsg, err := ms.keys.forwardTransformOnion(msg)
-	if err != nil {
-		log.Printf("received invalid message: %s", err.Error())
-		return false
+
+	// TODO: actually enforce the message count limit, not only best-effortish
+	for _, msg := range msgs {
+		if len(msg) != ms.conf.InputMessageLength {
+			log.Printf("received message of invalid length")
+			continue
+		}
+		decMsg, err := ms.keys.forwardTransformOnion(msg)
+		if err != nil {
+			log.Printf("received invalid message: %s", err.Error())
+			continue
+		}
+		ms.addMessage(decMsg)
 	}
-	ms.addMessage(decMsg)
-	return true
+	return nil
 }
 
 func (ms *MixnetServer) addMessage(msg []byte) {
@@ -102,6 +116,7 @@ func (ms *MixnetServer) ServeReceive(rw http.ResponseWriter, req *http.Request) 
 		return
 	}
 
+	var msgs [][]byte
 	for {
 		msg := make([]byte, ms.conf.InputMessageLength)
 		if _, err := io.ReadFull(req.Body, msg); err != nil {
@@ -111,20 +126,16 @@ func (ms *MixnetServer) ServeReceive(rw http.ResponseWriter, req *http.Request) 
 			http.Error(rw, fmt.Sprintf("cannot read full message: %s", err.Error()), http.StatusBadRequest)
 			return
 		}
-		if !ms.Receive(msg) {
-			log.Printf("cannot decrypt an incoming message; ignoring")
-		}
+		msgs = append(msgs, msg)
+	}
+	if err := ms.Receive(msgs); err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	rw.WriteHeader(http.StatusAccepted)
 }
 
-func (ms *MixnetServer) push() {
-	ms.mu.Lock()
-	onions := ms.onions
-	ms.onions = nil
-	ms.mu.Unlock()
-	log.Printf("pushing (len=%d)", len(onions))
-
+func (ms *MixnetServer) push(onions [][]byte) error {
 	// TODO: this reads urandom. make this read csprng
 	rng := mathrand.New(rand.ReaderSource{cryptorand.Reader})
 	rng.Shuffle(len(onions), func(i, j int) {
@@ -138,24 +149,42 @@ func (ms *MixnetServer) push() {
 	}
 	// send to next
 	// TODO: cache clients/connections/something
-	if _, err := http.Post(sendURL(ms.conf.NextAddr), "application/octet-stream", bytes.NewReader(allOnions)); err != nil {
+	resp, err := http.Post(sendURL(ms.conf.NextAddr), "application/octet-stream", bytes.NewReader(allOnions))
+	defer resp.Body.Close()
+	if err != nil {
 		// TODO: http error codes do not provide error iirc
 		// TODO: retry?
-		log.Printf("error sending further: %s", err)
-		return
+		return err
 	}
-	log.Printf("pushed")
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("status %d (%s) from /receive", resp.StatusCode, resp.Status)
+	}
+	return nil
 }
 
 func (ms *MixnetServer) loop() {
 	for {
+		var toSend [][]byte
 		ms.mu.Lock()
-		count := len(ms.onions)
-		ms.mu.Unlock()
-		if count > ms.conf.MinBatch {
-			ms.push()
+		if len(ms.onions) >= ms.conf.MinBatch {
+			// we want some limit, but probably a larger one
+			toSend = ms.onions[:ms.conf.MinBatch]
 		}
-		time.Sleep(time.Millisecond)
+		ms.mu.Unlock()
+		if toSend != nil {
+			log.Printf("pushing %d onions", len(toSend))
+			err := ms.push(toSend)
+			if err == nil {
+				log.Printf("push successful")
+				ms.mu.Lock()
+				ms.onions = ms.onions[len(toSend):]
+				ms.mu.Unlock()
+			} else {
+				log.Printf("error while pushing: %s", err.Error())
+				time.Sleep(10 * time.Second)
+			}
+		}
+		time.Sleep(time.Second) // TODO: actually use a condvar
 		// TODO: terminate the loop sometime
 	}
 }
@@ -219,10 +248,10 @@ func (mc *MixnetClient) SendMessage(msg []byte) error {
 		}
 	}
 	resp, err := http.Post(sendURL(mc.conf.Addr), "application/octet-stream", bytes.NewReader(onion))
+	resp.Body.Close()
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("status %d (%s) from /receive", resp.StatusCode, resp.Status)
 	}

@@ -45,13 +45,16 @@ func TestSmoke(t *testing.T) {
 		}(i)
 	}
 
+	// TODO: the following races with the servers starting to listen
+	// we should either synchronize this test, or do healthchecking and waiting for healthiness
+	// Or, we just replace this with an actual rpc framework and delegate that.
 	urls := make([]string, depth)
 	for i := range masterKeys {
 		urls[i] = fmt.Sprintf("http://%s", addrs[i])
 	}
 	mc, err := MakeClientConfig(urls)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 
 	cl := NewMixnetClient(mc)
