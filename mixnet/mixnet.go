@@ -218,7 +218,14 @@ func (mc *MixnetClient) SendMessage(msg []byte) error {
 			return err
 		}
 	}
-	http.Post(sendURL(mc.conf.Addr), "application/octet-stream", bytes.NewReader(onion))
+	resp, err := http.Post(sendURL(mc.conf.Addr), "application/octet-stream", bytes.NewReader(onion))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("status %d (%s) from /receive", resp.StatusCode, resp.Status)
+	}
 	return nil
 }
 
