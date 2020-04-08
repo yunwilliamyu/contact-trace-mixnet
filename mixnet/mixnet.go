@@ -152,8 +152,6 @@ func (ms *MixnetServer) push(onions [][]byte) error {
 	resp, err := http.Post(sendURL(ms.conf.NextAddr), "application/octet-stream", bytes.NewReader(allOnions))
 	defer resp.Body.Close()
 	if err != nil {
-		// TODO: http error codes do not provide error iirc
-		// TODO: retry?
 		return err
 	}
 	if resp.StatusCode >= 400 {
@@ -181,6 +179,7 @@ func (ms *MixnetServer) loop() {
 				ms.mu.Unlock()
 			} else {
 				log.Printf("error while pushing: %s", err.Error())
+				// TODO: reasonable backoffs for retrying
 				time.Sleep(10 * time.Second)
 			}
 		}
@@ -242,6 +241,7 @@ func (mc *MixnetClient) SendMessage(msg []byte) error {
 	onion := msg
 	for _, pk := range mc.conf.PubKeys {
 		var err error
+		// TODO: decrease allocations: every second Seal can use the same output buffer
 		onion, err = box.SealAnonymous(nil, onion, &pk, cryptorand.Reader)
 		if err != nil {
 			return err
@@ -252,7 +252,7 @@ func (mc *MixnetClient) SendMessage(msg []byte) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode > 400 {
 		return fmt.Errorf("status %d (%s) from /receive", resp.StatusCode, resp.Status)
 	}
 	return nil
