@@ -70,8 +70,9 @@ type MixnetServer struct {
 	MessageHandler func([]byte)
 	// next server address/connection to it
 
-	onions [][]byte // messages to forward, already decrypted
-	mu     sync.Mutex
+	onions      [][]byte // messages to forward, already decrypted
+	mu          sync.Mutex
+	readyToPush *sync.Cond
 }
 
 func (ms *MixnetServer) Receive(msgs [][]byte) error {
@@ -99,16 +100,6 @@ func (ms *MixnetServer) Receive(msgs [][]byte) error {
 		ms.addMessage(decMsg)
 	}
 	return nil
-}
-
-func (ms *MixnetServer) addMessage(msg []byte) {
-	if ms.MessageHandler != nil {
-		ms.MessageHandler(msg)
-		return
-	}
-	ms.mu.Lock()
-	ms.onions = append(ms.onions, msg)
-	ms.mu.Unlock()
 }
 
 func (ms *MixnetServer) ServePubkey(rw http.ResponseWriter, req *http.Request) {
@@ -171,28 +162,40 @@ func (ms *MixnetServer) loop() {
 	for {
 		var toSend [][]byte
 		ms.mu.Lock()
-		if len(ms.onions) >= ms.conf.MinBatchSize {
-			// we want some limit, but probably a larger one
-			toSend = ms.onions[:ms.conf.MinBatchSize]
+		for len(ms.onions) < ms.conf.MinBatchSize {
+			ms.readyToPush.Wait()
 		}
+		// we want some limit, but probably a larger one
+		toSend = ms.onions[:ms.conf.MinBatchSize]
 		ms.mu.Unlock()
-		if toSend != nil {
-			log.Printf("pushing %d onions", len(toSend))
-			err := ms.push(toSend)
-			if err == nil {
-				log.Printf("push successful")
-				ms.mu.Lock()
-				ms.onions = ms.onions[len(toSend):]
-				ms.mu.Unlock()
-			} else {
-				log.Printf("error while pushing: %s", err.Error())
-				// TODO: reasonable backoffs for retrying
-				time.Sleep(10 * time.Second)
-			}
+
+		log.Printf("pushing %d onions", len(toSend))
+		err := ms.push(toSend)
+		if err == nil {
+			log.Printf("push successful")
+			ms.mu.Lock()
+			ms.onions = ms.onions[len(toSend):]
+			ms.mu.Unlock()
+		} else {
+			log.Printf("error while pushing: %s", err.Error())
+			// TODO: reasonable backoffs for retrying
+			time.Sleep(10 * time.Second)
 		}
-		time.Sleep(time.Second) // TODO: actually use a condvar
 		// TODO: terminate the loop sometime
 	}
+}
+
+func (ms *MixnetServer) addMessage(msg []byte) {
+	if ms.MessageHandler != nil {
+		ms.MessageHandler(msg)
+		return
+	}
+	ms.mu.Lock()
+	ms.onions = append(ms.onions, msg)
+	if len(ms.onions) >= ms.conf.MinBatchSize {
+		ms.readyToPush.Signal()
+	}
+	ms.mu.Unlock()
 }
 
 func (ms *MixnetServer) Run(listenAddr string) error {
@@ -225,6 +228,7 @@ func deriveKeys(masterKey string) keys {
 func NewMixnetServer(conf *MixnetServerConfig, idx int, masterKey string) *MixnetServer {
 	ms := &MixnetServer{conf: conf, idx: idx}
 	ms.keys = deriveKeys(masterKey)
+	ms.readyToPush = sync.NewCond(&ms.mu)
 	return ms
 }
 

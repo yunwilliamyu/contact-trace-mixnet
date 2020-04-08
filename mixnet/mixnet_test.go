@@ -75,7 +75,7 @@ func TestSmoke(t *testing.T) {
 	stop := make(chan struct{})
 
 	go func() {
-		var dummyMsg [InnerMessageLength]byte
+		var dummyMsg [messageLength]byte
 		for {
 			time.Sleep(10 * time.Millisecond)
 			_ = cl.SendMessage(dummyMsg[:])
