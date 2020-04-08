@@ -45,15 +45,16 @@ func TestSmoke(t *testing.T) {
 		}(i)
 	}
 
-	mc := MixnetClientConfig{
-		Addr:    "http://" + addrs[len(addrs)-1],
-		PubKeys: make([][32]byte, depth),
-	}
+	urls := make([]string, depth)
 	for i := range masterKeys {
-		mc.PubKeys[i] = PubKey(masterKeys[i]) // TODO: test pubkey retrieval over http
+		urls[i] = fmt.Sprintf("http://%s", addrs[i])
+	}
+	mc, err := MakeClientConfig(urls)
+	if err != nil {
+		t.Error(err)
 	}
 
-	cl := NewMixnetClient(&mc)
+	cl := NewMixnetClient(mc)
 
 	const count = 10
 	sent := make(map[string]bool)

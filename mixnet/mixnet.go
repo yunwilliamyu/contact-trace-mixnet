@@ -9,6 +9,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/nacl/box"
 	"io"
+	"io/ioutil"
 	"log"
 	mathrand "math/rand"
 	"net/http"
@@ -20,9 +21,8 @@ import (
 // TODO: maybe non-http if we need something in any way more complicated
 
 type MixnetClientConfig struct {
-	// reverse indexed!
 	Addr    string
-	PubKeys [][32]byte // [0] is unused
+	PubKeys [][32]byte // reverse indexed!
 }
 
 type MixnetServerConfig struct {
@@ -220,4 +220,32 @@ func (mc *MixnetClient) SendMessage(msg []byte) error {
 	}
 	http.Post(sendURL(mc.conf.Addr), "application/octet-stream", bytes.NewReader(onion))
 	return nil
+}
+
+func MakeClientConfig(addrs []string) (*MixnetClientConfig, error) {
+	conf := &MixnetClientConfig{
+		Addr:    addrs[len(addrs)-1],
+		PubKeys: make([][32]byte, len(addrs)),
+	}
+	// TODO: do in parallel
+	for i, addr := range addrs {
+		resp, err := http.Get(fmt.Sprintf("%s/v0/pubkey", addr))
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("received %d (%s) from %s", resp.StatusCode, resp.Status, addr)
+		}
+		pubkey, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if len(pubkey) != 32 {
+			return nil, fmt.Errorf("key received from %s is %d bytes long instead of %d", addr, len(pubkey), 32)
+		}
+		copy(conf.PubKeys[i][:], pubkey)
+	}
+	return conf, nil
 }
