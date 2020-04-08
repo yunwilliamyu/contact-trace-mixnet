@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"github.com/yunwilliamyu/contact-trace-mixnet/mixnet"
 	"io/ioutil"
@@ -11,22 +12,32 @@ import (
 
 var masterKeyFile = flag.String("master_key_file", "PROVIDE MASTER KEY", "Path to the master secret key")
 var listenAddr = flag.String("listen_addr", "PROVIDE LISTEN ADDR", "Address to bind to")
-var nextURL = flag.String("next_url", "PROVIDE NEXT URL", "URL of the next server")
 var idx = flag.Int("idx", 0, "Index in the mixnet, counting from the end") // TODO: relieve the need to specify this
+var config = flag.String("config_file", "", "path to the location of the config file in json format")
+
+func configFromFlag() *mixnet.MixnetServerConfig {
+	text, err := ioutil.ReadFile(*config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	c := &mixnet.MixnetServerConfig{}
+	if err := json.Unmarshal(text, &c); err != nil {
+		log.Fatal(err)
+	}
+	return c
+}
 
 func main() {
 	flag.Parse()
-	conf := &mixnet.MixnetServerConfig{
-		MinBatch:           100,
-		NextAddr:           *nextURL,
-		InputMessageLength: mixnet.ForwardMessageLength(*idx),
-	}
-	// TODO: load config
+
+	conf := configFromFlag()
+
 	masterKey, err := ioutil.ReadFile(*masterKeyFile)
 	if err != nil {
 		log.Fatal(err)
 	}
-	ms := mixnet.NewMixnetServer(conf, string(masterKey))
+
+	ms := mixnet.NewMixnetServer(conf, *idx, string(masterKey))
 	if *idx == 0 {
 		var mu sync.Mutex
 		ms.MessageHandler = func(msg []byte) {

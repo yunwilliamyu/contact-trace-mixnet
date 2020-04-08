@@ -7,8 +7,10 @@ import (
 	"time"
 )
 
-func msgForId(i int) [InnerMessageLength]byte {
-	var msg [InnerMessageLength]byte
+const messageLength = 10
+
+func msgForId(i int) [messageLength]byte {
+	var msg [messageLength]byte
 	msg[0] = byte(i)
 	return msg
 }
@@ -19,21 +21,21 @@ func TestSmoke(t *testing.T) {
 	for i := range masterKeys {
 		masterKeys[i] = fmt.Sprintf("key%d", i)
 	}
+	msc := &MixnetServerConfig{
+		MinBatchSize:        10,
+		MessageLength:       messageLength,
+		MaxBufferedMessages: 1000,
+		Addrs:               make([]string, depth),
+	}
 	addrs := make([]string, depth)
 	for i := range masterKeys {
 		addrs[i] = fmt.Sprintf("127.0.0.1:%d", 8000+i)
+		msc.Addrs[i] = "http://" + addrs[i]
 	}
 	recv := make(chan string, 1)
 	for i := range masterKeys {
 		go func(i int) {
-			msc := &MixnetServerConfig{
-				MinBatch:           10,
-				InputMessageLength: ForwardMessageLength(i),
-			}
-			if i != 0 {
-				msc.NextAddr = "http://" + addrs[i-1]
-			}
-			ms := NewMixnetServer(msc, masterKeys[i])
+			ms := NewMixnetServer(msc, i, masterKeys[i])
 			if i == 0 {
 				ms.MessageHandler = func(msg []byte) {
 					fmt.Printf("msg: %v\n", msg)

@@ -21,14 +21,24 @@ import (
 // TODO: maybe non-http if we need something in any way more complicated
 
 type MixnetClientConfig struct {
-	Addr    string
-	PubKeys [][32]byte // reverse indexed!
+	Addr          string
+	PubKeys       [][32]byte // reverse indexed!
+	MessageLength int
 }
 
 type MixnetServerConfig struct {
-	MinBatch           int
-	NextAddr           string
-	InputMessageLength int // TODO: make this less clunky
+	Addrs               []string
+	MinBatchSize        int `json:"min_batch_size"`
+	MessageLength       int `json:"message_length"`
+	MaxBufferedMessages int `json:"max_buffered_messages"`
+}
+
+func (msc MixnetServerConfig) NextAddr(idx int) string {
+	return msc.Addrs[idx-1]
+}
+
+func (msc MixnetServerConfig) InputMessageLength(idx int) int {
+	return ForwardMessageLength(idx, msc.MessageLength)
 }
 
 func sendURL(addr string) string {
@@ -40,8 +50,8 @@ type keys struct {
 	publicKey  [32]byte
 }
 
-func ForwardMessageLength(idx int) int {
-	return InnerMessageLength + box.AnonymousOverhead*(idx+1)
+func ForwardMessageLength(idx int, messageLength int) int {
+	return messageLength + box.AnonymousOverhead*(idx+1)
 }
 
 func (k keys) forwardTransformOnion(msg []byte) ([]byte, error) {
@@ -55,6 +65,7 @@ func (k keys) forwardTransformOnion(msg []byte) ([]byte, error) {
 // MixnetServer represents a nonfinal server in the mixnet chain
 type MixnetServer struct {
 	conf           *MixnetServerConfig
+	idx            int
 	keys           keys
 	MessageHandler func([]byte)
 	// next server address/connection to it
@@ -63,10 +74,6 @@ type MixnetServer struct {
 	mu     sync.Mutex
 }
 
-const InnerMessageLength = 10 // TODO
-
-const MaxMessagesInMemory = 100 * 1000
-
 func (ms *MixnetServer) Receive(msgs [][]byte) error {
 	// TODO: do we need to ensure that only the previous server is talking to us? probably, because
 	ms.mu.Lock()
@@ -74,13 +81,13 @@ func (ms *MixnetServer) Receive(msgs [][]byte) error {
 	messageCount := len(ms.onions) + len(msgs)
 	ms.mu.Unlock()
 
-	if messageCount > MaxMessagesInMemory {
+	if messageCount > ms.conf.MaxBufferedMessages {
 		return fmt.Errorf("too many buffered messages")
 	}
 
 	// TODO: actually enforce the message count limit, not only best-effortish
 	for _, msg := range msgs {
-		if len(msg) != ms.conf.InputMessageLength {
+		if len(msg) != ms.conf.InputMessageLength(ms.idx) {
 			log.Printf("received message of invalid length")
 			continue
 		}
@@ -118,7 +125,7 @@ func (ms *MixnetServer) ServeReceive(rw http.ResponseWriter, req *http.Request) 
 
 	var msgs [][]byte
 	for {
-		msg := make([]byte, ms.conf.InputMessageLength)
+		msg := make([]byte, ms.conf.InputMessageLength(ms.idx))
 		if _, err := io.ReadFull(req.Body, msg); err != nil {
 			if err == io.EOF {
 				break
@@ -143,13 +150,13 @@ func (ms *MixnetServer) push(onions [][]byte) error {
 	})
 
 	// concatenate all the onions
-	allOnions := make([]byte, 0, len(onions)*(ms.conf.InputMessageLength-box.AnonymousOverhead))
+	allOnions := make([]byte, 0, len(onions)*ForwardMessageLength(ms.idx-1, ms.conf.MessageLength))
 	for _, o := range onions {
 		allOnions = append(allOnions, o...)
 	}
 	// send to next
 	// TODO: cache clients/connections/something
-	resp, err := http.Post(sendURL(ms.conf.NextAddr), "application/octet-stream", bytes.NewReader(allOnions))
+	resp, err := http.Post(sendURL(ms.conf.NextAddr(ms.idx)), "application/octet-stream", bytes.NewReader(allOnions))
 	defer resp.Body.Close()
 	if err != nil {
 		return err
@@ -164,9 +171,9 @@ func (ms *MixnetServer) loop() {
 	for {
 		var toSend [][]byte
 		ms.mu.Lock()
-		if len(ms.onions) >= ms.conf.MinBatch {
+		if len(ms.onions) >= ms.conf.MinBatchSize {
 			// we want some limit, but probably a larger one
-			toSend = ms.onions[:ms.conf.MinBatch]
+			toSend = ms.onions[:ms.conf.MinBatchSize]
 		}
 		ms.mu.Unlock()
 		if toSend != nil {
@@ -215,8 +222,8 @@ func deriveKeys(masterKey string) keys {
 	return k
 }
 
-func NewMixnetServer(conf *MixnetServerConfig, masterKey string) *MixnetServer {
-	ms := &MixnetServer{conf: conf}
+func NewMixnetServer(conf *MixnetServerConfig, idx int, masterKey string) *MixnetServer {
+	ms := &MixnetServer{conf: conf, idx: idx}
 	ms.keys = deriveKeys(masterKey)
 	return ms
 }
@@ -235,8 +242,8 @@ func NewMixnetClient(conf *MixnetClientConfig) *MixnetClient {
 }
 
 func (mc *MixnetClient) SendMessage(msg []byte) error {
-	if len(msg) != InnerMessageLength {
-		return fmt.Errorf("wrong message size: %d!=%d", len(msg), InnerMessageLength)
+	if len(msg) != mc.conf.MessageLength {
+		return fmt.Errorf("wrong message size: %d!=%d", len(msg), mc.conf.MessageLength)
 	}
 	onion := msg
 	for _, pk := range mc.conf.PubKeys {

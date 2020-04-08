@@ -29,7 +29,7 @@ func main() {
 	conf := configFromFlag()
 	mc := mixnet.NewMixnetClient(conf)
 	for {
-		buf := make([]byte, mixnet.InnerMessageLength)
+		buf := make([]byte, conf.MessageLength)
 		if _, err := io.ReadFull(os.Stdin, buf); err != nil {
 			if err == io.EOF {
 				return
