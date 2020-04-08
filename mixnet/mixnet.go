@@ -19,15 +19,20 @@ import (
 // TODO: TLS
 // TODO: maybe non-http if we need something in any way more complicated
 
-type MixnetConfig struct {
-	MinBatch int
+type MixnetClientConfig struct {
 	// reverse indexed!
-	Addrs   []string
+	Addr    string
 	PubKeys [][32]byte // [0] is unused
 }
 
-func (mc MixnetConfig) URL(idx int) string {
-	return fmt.Sprintf("http://%s/receive", mc.Addrs[idx])
+type MixnetServerConfig struct {
+	MinBatch           int
+	NextAddr           string
+	InputMessageLength int // TODO: make this less clunky
+}
+
+func sendURL(addr string) string {
+	return fmt.Sprintf("%s/v0/receive", addr)
 }
 
 type keys struct {
@@ -35,7 +40,7 @@ type keys struct {
 	publicKey  [32]byte
 }
 
-func forwardMessageLength(idx int) int {
+func ForwardMessageLength(idx int) int {
 	return InnerMessageLength + box.AnonymousOverhead*(idx+1)
 }
 
@@ -49,8 +54,7 @@ func (k keys) forwardTransformOnion(msg []byte) ([]byte, error) {
 
 // MixnetServer represents a nonfinal server in the mixnet chain
 type MixnetServer struct {
-	conf           *MixnetConfig
-	idx            int // how many servers are there in front of me, incl. the final endpoint
+	conf           *MixnetServerConfig
 	keys           keys
 	MessageHandler func([]byte)
 	// next server address/connection to it
@@ -61,14 +65,9 @@ type MixnetServer struct {
 
 const InnerMessageLength = 10 // TODO
 
-// TODO: sane logging prefixes
-func (ms *MixnetServer) name() string {
-	return ms.conf.Addrs[ms.idx]
-}
-
 func (ms *MixnetServer) Receive(msg []byte) (ok bool) {
 	// TODO: do we need to ensure that only the previous server is talking to us? probably, because
-	if len(msg) != forwardMessageLength(ms.idx) {
+	if len(msg) != ms.conf.InputMessageLength {
 		log.Printf("received message of invalid length")
 		return false
 	}
@@ -77,15 +76,12 @@ func (ms *MixnetServer) Receive(msg []byte) (ok bool) {
 		log.Printf("received invalid message: %s", err.Error())
 		return false
 	}
-	if len(decMsg) != forwardMessageLength(ms.idx-1) {
-		panic(len(decMsg))
-	}
 	ms.addMessage(decMsg)
 	return true
 }
 
 func (ms *MixnetServer) addMessage(msg []byte) {
-	if ms.idx == 0 {
+	if ms.MessageHandler != nil {
 		ms.MessageHandler(msg)
 		return
 	}
@@ -94,15 +90,20 @@ func (ms *MixnetServer) addMessage(msg []byte) {
 	ms.mu.Unlock()
 }
 
-func (ms *MixnetServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+func (ms *MixnetServer) ServePubkey(rw http.ResponseWriter, req *http.Request) {
+	rw.Header().Set("Content-Type", "application/octet-stream")
+	rw.WriteHeader(http.StatusOK)
+	rw.Write(ms.keys.publicKey[:])
+}
+
+func (ms *MixnetServer) ServeReceive(rw http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		http.Error(rw, "only POST allowed", http.StatusBadRequest)
 		return
 	}
 
-	msgSize := forwardMessageLength(ms.idx)
 	for {
-		msg := make([]byte, msgSize)
+		msg := make([]byte, ms.conf.InputMessageLength)
 		if _, err := io.ReadFull(req.Body, msg); err != nil {
 			if err == io.EOF {
 				break
@@ -131,13 +132,13 @@ func (ms *MixnetServer) push() {
 	})
 
 	// concatenate all the onions
-	allOnions := make([]byte, 0, len(onions)*forwardMessageLength(ms.idx-1))
+	allOnions := make([]byte, 0, len(onions)*(ms.conf.InputMessageLength-box.AnonymousOverhead))
 	for _, o := range onions {
 		allOnions = append(allOnions, o...)
 	}
 	// send to next
 	// TODO: cache clients/connections/something
-	if _, err := http.Post(ms.conf.URL(ms.idx-1), "application/octet-stream", bytes.NewReader(allOnions)); err != nil {
+	if _, err := http.Post(sendURL(ms.conf.NextAddr), "application/octet-stream", bytes.NewReader(allOnions)); err != nil {
 		// TODO: http error codes do not provide error iirc
 		// TODO: retry?
 		log.Printf("error sending further: %s", err)
@@ -159,14 +160,15 @@ func (ms *MixnetServer) loop() {
 	}
 }
 
-func (ms *MixnetServer) Run() error {
+func (ms *MixnetServer) Run(listenAddr string) error {
 	go ms.loop()
 
 	mux := http.NewServeMux()
-	mux.Handle("/receive", ms)
+	mux.Handle("/v0/receive", http.HandlerFunc(ms.ServeReceive))
+	mux.Handle("/v0/pubkey", http.HandlerFunc(ms.ServePubkey))
 
 	s := &http.Server{
-		Addr:    ms.conf.Addrs[ms.idx],
+		Addr:    listenAddr,
 		Handler: mux,
 	}
 	return s.ListenAndServe()
@@ -185,20 +187,9 @@ func deriveKeys(masterKey string) keys {
 	return k
 }
 
-func NewMixnetServer(conf *MixnetConfig, masterKey string) *MixnetServer {
+func NewMixnetServer(conf *MixnetServerConfig, masterKey string) *MixnetServer {
 	ms := &MixnetServer{conf: conf}
 	ms.keys = deriveKeys(masterKey)
-
-	ms.idx = -1
-	for i, pk := range conf.PubKeys {
-		if pk == ms.keys.publicKey {
-			ms.idx = i
-			break
-		}
-	}
-	if ms.idx == -1 {
-		panic("cannot find our key in list")
-	}
 	return ms
 }
 
@@ -208,10 +199,10 @@ func PubKey(masterKey string) [32]byte {
 }
 
 type MixnetClient struct {
-	conf *MixnetConfig
+	conf *MixnetClientConfig
 }
 
-func NewMixnetClient(conf *MixnetConfig) *MixnetClient {
+func NewMixnetClient(conf *MixnetClientConfig) *MixnetClient {
 	return &MixnetClient{conf: conf}
 }
 
@@ -227,6 +218,6 @@ func (mc *MixnetClient) SendMessage(msg []byte) error {
 			return err
 		}
 	}
-	http.Post(mc.conf.URL(len(mc.conf.Addrs)-1), "application/octet-stream", bytes.NewReader(onion))
+	http.Post(sendURL(mc.conf.Addr), "application/octet-stream", bytes.NewReader(onion))
 	return nil
 }

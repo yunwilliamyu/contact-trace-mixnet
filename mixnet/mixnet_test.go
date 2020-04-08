@@ -19,28 +19,38 @@ func TestSmoke(t *testing.T) {
 	for i := range masterKeys {
 		masterKeys[i] = fmt.Sprintf("key%d", i)
 	}
-	mc := MixnetConfig{
-		MinBatch: 5,
-		Addrs:   make([]string, depth),
-		PubKeys: make([][32]byte, depth),
-	}
+	addrs := make([]string, depth)
 	for i := range masterKeys {
-		mc.Addrs[i] = fmt.Sprintf("127.0.0.1:%d", 8000+i)
-		mc.PubKeys[i] = PubKey(masterKeys[i])
+		addrs[i] = fmt.Sprintf("127.0.0.1:%d", 8000+i)
 	}
 	recv := make(chan string, 1)
 	for i := range masterKeys {
 		go func(i int) {
-			ms := NewMixnetServer(&mc, masterKeys[i])
+			msc := &MixnetServerConfig{
+				MinBatch:           10,
+				InputMessageLength: ForwardMessageLength(i),
+			}
+			if i != 0 {
+				msc.NextAddr = "http://" + addrs[i-1]
+			}
+			ms := NewMixnetServer(msc, masterKeys[i])
 			if i == 0 {
 				ms.MessageHandler = func(msg []byte) {
 					fmt.Printf("msg: %v\n", msg)
 					recv <- string(msg)
 				}
 			}
-			err := ms.Run()
+			err := ms.Run(addrs[i])
 			log.Fatal(err)
 		}(i)
+	}
+
+	mc := MixnetClientConfig{
+		Addr:    "http://" + addrs[len(addrs)-1],
+		PubKeys: make([][32]byte, depth),
+	}
+	for i := range masterKeys {
+		mc.PubKeys[i] = PubKey(masterKeys[i]) // TODO: test pubkey retrieval over http
 	}
 
 	cl := NewMixnetClient(&mc)
