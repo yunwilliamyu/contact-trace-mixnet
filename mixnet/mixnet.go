@@ -215,7 +215,13 @@ func (ms *MixnetServer) push(onions [][]byte) error {
 
 	// send to next
 	// TODO: cache clients/connections/something
-	resp, err := http.Post(sendURL(ms.conf.NextAddr(ms.idx)), "application/json", bytes.NewReader(rawReq))
+	var url string
+	if ms.idx > 0 {
+		url = sendURL(ms.conf.NextAddr(ms.idx))
+	} else {
+		url = sendURL(ms.conf.OutputAddr)
+	}
+	resp, err := http.Post(url, "application/json", bytes.NewReader(rawReq))
 	defer resp.Body.Close()
 	if err != nil {
 		return err

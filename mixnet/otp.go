@@ -14,13 +14,13 @@ const cxidLength = 36
 const cacheSize = 100 * 1000 * 1000
 
 type OTPChecker struct {
-	URL string
+	url string
 
 	// cache maps from OTP to its assigned cxid
 	cache *ristretto.Cache
 }
 
-func NewOTPChecker(url string) *OTPChecker {
+func NewOTPChecker(baseUrl string) *OTPChecker {
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: cacheSize * 10,
 		MaxCost:     cacheSize,
@@ -30,7 +30,7 @@ func NewOTPChecker(url string) *OTPChecker {
 		log.Fatal(err)
 	}
 	return &OTPChecker{
-		URL:   url,
+		url:   fmt.Sprintf("%s/v0/test", baseUrl),
 		cache: cache,
 	}
 }
@@ -67,7 +67,7 @@ func (oc *OTPChecker) check(otp string, cxid string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(oc.URL, "application/json", bytes.NewReader(reqBody))
+	resp, err := http.Post(oc.url, "application/json", bytes.NewReader(reqBody))
 	resp.Body.Close()
 	if err != nil {
 		return err
