@@ -50,11 +50,7 @@ func TestSmoke(t *testing.T) {
 	// TODO: the following races with the servers starting to listen
 	// we should either synchronize this test, or do healthchecking and waiting for healthiness
 	// Or, we just replace this with an actual rpc framework and delegate that.
-	urls := make([]string, depth)
-	for i := range masterKeys {
-		urls[i] = fmt.Sprintf("http://%s", addrs[i])
-	}
-	mc, err := MakeClientConfig(urls)
+	mc, err := MakeClientConfig(msc)
 	if err != nil {
 		t.Fatal(err)
 	}

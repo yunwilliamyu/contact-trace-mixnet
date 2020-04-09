@@ -269,13 +269,14 @@ func (mc *MixnetClient) SendMessage(msg []byte) error {
 	return nil
 }
 
-func MakeClientConfig(addrs []string) (*MixnetClientConfig, error) {
+func MakeClientConfig(sc *MixnetServerConfig) (*MixnetClientConfig, error) {
 	conf := &MixnetClientConfig{
-		Addr:    addrs[len(addrs)-1],
-		PubKeys: make([][32]byte, len(addrs)),
+		Addr:          sc.Addrs[len(sc.Addrs)-1],
+		PubKeys:       make([][32]byte, len(sc.Addrs)),
+		MessageLength: sc.MessageLength,
 	}
 	// TODO: do in parallel
-	for i, addr := range addrs {
+	for i, addr := range sc.Addrs {
 		resp, err := http.Get(fmt.Sprintf("%s/v0/pubkey", addr))
 		if err != nil {
 			return nil, err

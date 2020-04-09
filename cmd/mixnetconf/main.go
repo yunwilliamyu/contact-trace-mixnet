@@ -19,12 +19,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	mc, err := mixnet.MakeClientConfig(conf.Addrs)
+	mc, err := mixnet.MakeClientConfig(conf)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	mc.MessageLength = conf.MessageLength
 
 	json.NewEncoder(os.Stdout).Encode(mc)
 }
