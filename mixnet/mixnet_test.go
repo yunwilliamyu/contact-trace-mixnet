@@ -37,9 +37,12 @@ func TestSmoke(t *testing.T) {
 		go func(i int) {
 			ms := NewMixnetServer(msc, i, masterKeys[i])
 			if i == 0 {
-				ms.MessageHandler = func(msg []byte) {
-					fmt.Printf("msg: %v\n", msg)
-					recv <- string(msg)
+				ms.PushHandler = func(msgs [][]byte) error {
+					for _, msg := range msgs {
+						fmt.Printf("msg: %v\n", msg)
+						recv <- string(msg)
+					}
+					return nil
 				}
 			}
 			err := ms.Run(addrs[i])

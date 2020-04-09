@@ -31,10 +31,13 @@ func main() {
 	ms := mixnet.NewMixnetServer(conf, *idx, string(masterKey))
 	if *idx == 0 {
 		var mu sync.Mutex
-		ms.MessageHandler = func(msg []byte) {
+		ms.PushHandler = func(msgs [][]byte) error {
 			mu.Lock()
-			os.Stdout.Write(msg) // TODO: nondelimited output here seems like a very bad idea
+			for _, msg := range msgs {
+				os.Stdout.Write(msg) // TODO: nondelimited output here seems like a very bad idea
+			}
 			mu.Unlock()
+			return nil
 		}
 	}
 	log.Fatal(ms.Run(*listenAddr))

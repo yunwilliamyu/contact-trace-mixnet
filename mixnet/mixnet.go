@@ -67,7 +67,7 @@ type MixnetServer struct {
 	conf           *MixnetServerConfig
 	idx            int
 	keys           keys
-	MessageHandler func([]byte)
+	PushHandler    func([][]byte) error
 	// next server address/connection to it
 
 	onions      [][]byte // messages to forward, already decrypted
@@ -170,7 +170,12 @@ func (ms *MixnetServer) loop() {
 		ms.mu.Unlock()
 
 		log.Printf("pushing %d onions", len(toSend))
-		err := ms.push(toSend)
+		var err error
+		if ms.PushHandler != nil {
+			err = ms.PushHandler(toSend)
+		} else {
+			err = ms.push(toSend)
+		}
 		if err == nil {
 			log.Printf("push successful")
 			ms.mu.Lock()
@@ -186,10 +191,6 @@ func (ms *MixnetServer) loop() {
 }
 
 func (ms *MixnetServer) addMessage(msg []byte) {
-	if ms.MessageHandler != nil {
-		ms.MessageHandler(msg)
-		return
-	}
 	ms.mu.Lock()
 	ms.onions = append(ms.onions, msg)
 	if len(ms.onions) >= ms.conf.MinBatchSize {
