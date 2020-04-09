@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "github.com/yumwilliamyu/contact-trace-mixnet/pb";
+
+message PutOnionsRequest {
+  repeated bytes msgs = 1;
+  string otp = 2;
+  string cxid = 3;
+}

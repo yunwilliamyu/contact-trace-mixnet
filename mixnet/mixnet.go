@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/yunwilliamyu/contact-trace-mixnet/mixnet/pb"
 	"github.com/yunwilliamyu/contact-trace-mixnet/rand"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/nacl/box"
+	"google.golang.org/protobuf/encoding/protojson"
 	"io"
 	"io/ioutil"
 	"log"
@@ -29,6 +31,8 @@ type MixnetClientConfig struct {
 
 type MixnetServerConfig struct {
 	Addrs               []string
+	OutputAddr          string
+	OtpCheck            string
 	MinBatchSize        int `json:"min_batch_size"`
 	MessageLength       int `json:"message_length"`
 	MaxBufferedMessages int `json:"max_buffered_messages"`
@@ -68,6 +72,7 @@ type MixnetServer struct {
 	conf        *MixnetServerConfig
 	idx         int
 	keys        keys
+	otpChecker  *OTPChecker
 	PushHandler func([][]byte) error
 	// next server address/connection to it
 
@@ -76,19 +81,34 @@ type MixnetServer struct {
 	readyToPush *sync.Cond
 }
 
-func (ms *MixnetServer) Receive(msgs [][]byte) error {
+func (ms *MixnetServer) checkOTP(req *pb.PutOnionsRequest) error {
+	if ms.otpChecker == nil {
+		return nil
+	}
+	if req.GetOtp() == "" {
+		// provide a clearer error
+		return fmt.Errorf("no OTP provided")
+	}
+	return ms.otpChecker.Check(req.GetOtp(), req.GetCxid())
+}
+
+func (ms *MixnetServer) Receive(req *pb.PutOnionsRequest) error {
 	// TODO: do we need to ensure that only the previous server is talking to us? probably, because
 	ms.mu.Lock()
 	// do not bother decrypting if we want to refuse anyway
-	messageCount := len(ms.onions) + len(msgs)
+	messageCount := len(ms.onions) + len(req.Msgs)
 	ms.mu.Unlock()
 
 	if messageCount > ms.conf.MaxBufferedMessages {
 		return fmt.Errorf("too many buffered messages")
 	}
 
+	if err := ms.checkOTP(req); err != nil {
+		return err
+	}
+
 	// TODO: actually enforce the message count limit, not only best-effortish
-	for _, msg := range msgs {
+	for _, msg := range req.Msgs {
 		if len(msg) != ms.conf.InputMessageLength(ms.idx) {
 			log.Printf("received message of invalid length")
 			continue
@@ -125,8 +145,40 @@ func (ms *MixnetServer) ServeReceive(rw http.ResponseWriter, req *http.Request) 
 		http.Error(rw, "only POST allowed", http.StatusBadRequest)
 		return
 	}
+	ct := req.Header.Get("Content-Type")
+	switch ct {
+	case "application/octet-stream":
+		ms.legacyReceive(rw, req)
+	case "application/json":
+		ms.jsonReceive(rw, req)
+	default:
+		http.Error(rw, fmt.Sprintf("unknown request Content-Type %q", ct), http.StatusBadRequest)
+	}
+}
 
-	var msgs [][]byte
+//go:generate protoc pb/mixnet.proto --go_out=. --go_opt=paths=source_relative
+
+func (ms *MixnetServer) jsonReceive(rw http.ResponseWriter, req *http.Request) {
+	contents, err := ioutil.ReadAll(req.Body)
+	req.Body.Close()
+	if err != nil {
+		http.Error(rw, fmt.Sprintf("couldn't read request: %s", err.Error()), http.StatusInternalServerError)
+		return
+	}
+	putReq := &pb.PutOnionsRequest{}
+	if err := protojson.Unmarshal(contents, putReq); err != nil {
+		http.Error(rw, fmt.Sprintf("couldn't parse request: %s", err.Error()), http.StatusBadRequest)
+		return
+	}
+	if err := ms.Receive(putReq); err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rw.WriteHeader(http.StatusAccepted)
+}
+
+func (ms *MixnetServer) legacyReceive(rw http.ResponseWriter, req *http.Request) {
+	putReq := &pb.PutOnionsRequest{}
 	for {
 		msg := make([]byte, ms.conf.InputMessageLength(ms.idx))
 		if _, err := io.ReadFull(req.Body, msg); err != nil {
@@ -136,9 +188,9 @@ func (ms *MixnetServer) ServeReceive(rw http.ResponseWriter, req *http.Request) 
 			http.Error(rw, fmt.Sprintf("cannot read full message: %s", err.Error()), http.StatusBadRequest)
 			return
 		}
-		msgs = append(msgs, msg)
+		putReq.Msgs = append(putReq.Msgs, msg)
 	}
-	if err := ms.Receive(msgs); err != nil {
+	if err := ms.Receive(putReq); err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -152,14 +204,18 @@ func (ms *MixnetServer) push(onions [][]byte) error {
 		onions[i], onions[j] = onions[j], onions[i]
 	})
 
-	// concatenate all the onions
-	allOnions := make([]byte, 0, len(onions)*ForwardMessageLength(ms.idx-1, ms.conf.MessageLength))
-	for _, o := range onions {
-		allOnions = append(allOnions, o...)
+	req := &pb.PutOnionsRequest{
+		Msgs: onions,
 	}
+
+	rawReq, err := protojson.Marshal(req)
+	if err != nil {
+		return err
+	}
+
 	// send to next
 	// TODO: cache clients/connections/something
-	resp, err := http.Post(sendURL(ms.conf.NextAddr(ms.idx)), "application/octet-stream", bytes.NewReader(allOnions))
+	resp, err := http.Post(sendURL(ms.conf.NextAddr(ms.idx)), "application/json", bytes.NewReader(rawReq))
 	defer resp.Body.Close()
 	if err != nil {
 		return err
@@ -180,6 +236,8 @@ func (ms *MixnetServer) loop() {
 		// we want some limit, but probably a larger one
 		toSend = ms.onions[:ms.conf.MinBatchSize]
 		ms.mu.Unlock()
+
+		toSend = append([][]byte(nil), toSend...) // we want to be able to write to toSend
 
 		log.Printf("pushing %d onions", len(toSend))
 		var err error
@@ -243,6 +301,9 @@ func NewMixnetServer(conf *MixnetServerConfig, idx int, masterKey string) *Mixne
 	ms := &MixnetServer{conf: conf, idx: idx}
 	ms.keys = deriveKeys(masterKey)
 	ms.readyToPush = sync.NewCond(&ms.mu)
+	if conf.OtpCheck != "" && idx == len(conf.Addrs)-1 {
+		ms.otpChecker = NewOTPChecker(conf.OtpCheck)
+	}
 	return ms
 }
 
