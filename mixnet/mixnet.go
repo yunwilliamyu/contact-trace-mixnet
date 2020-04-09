@@ -4,6 +4,7 @@ import (
 	"bytes"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"github.com/yunwilliamyu/contact-trace-mixnet/rand"
 	"golang.org/x/crypto/hkdf"
@@ -64,10 +65,10 @@ func (k keys) forwardTransformOnion(msg []byte) ([]byte, error) {
 
 // MixnetServer represents a nonfinal server in the mixnet chain
 type MixnetServer struct {
-	conf           *MixnetServerConfig
-	idx            int
-	keys           keys
-	PushHandler    func([][]byte) error
+	conf        *MixnetServerConfig
+	idx         int
+	keys        keys
+	PushHandler func([][]byte) error
 	// next server address/connection to it
 
 	onions      [][]byte // messages to forward, already decrypted
@@ -106,6 +107,17 @@ func (ms *MixnetServer) ServePubkey(rw http.ResponseWriter, req *http.Request) {
 	rw.Header().Set("Content-Type", "application/octet-stream")
 	rw.WriteHeader(http.StatusOK)
 	rw.Write(ms.keys.publicKey[:])
+}
+
+func (ms *MixnetServer) ServeConfig(rw http.ResponseWriter, req *http.Request) {
+	text, err := json.MarshalIndent(ms.conf, "", "  ")
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(http.StatusOK)
+	rw.Write(text)
 }
 
 func (ms *MixnetServer) ServeReceive(rw http.ResponseWriter, req *http.Request) {
@@ -205,6 +217,7 @@ func (ms *MixnetServer) Run(listenAddr string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/v0/receive", http.HandlerFunc(ms.ServeReceive))
 	mux.Handle("/v0/pubkey", http.HandlerFunc(ms.ServePubkey))
+	mux.Handle("/v0/config", http.HandlerFunc(ms.ServeConfig))
 
 	s := &http.Server{
 		Addr:    listenAddr,
